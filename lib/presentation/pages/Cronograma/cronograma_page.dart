@@ -593,14 +593,10 @@ class _CronogramaPageState extends State<CronogramaPage> {
           response['horas'] as int? ?? (horario == '19:00-22:00' ? 3 : 4);
 
       // 2. Remover a aula
-      final deleteResponse = await Supabase.instance.client
+      await Supabase.instance.client
           .from('aulas')
           .delete()
           .eq('idaula', idAula);
-
-      if (deleteResponse == null) {
-        throw Exception('Erro ao excluir a aula do banco de dados.');
-      }
 
       // 3. Restaurar carga horária no estado local
       setState(() {
@@ -740,13 +736,16 @@ class _CronogramaPageState extends State<CronogramaPage> {
                 }
                 final data = snapshot.data!;
                 // print(data);
-                _cargaRestante =
-                    data['cargahorariauc'] - data['cargahorariaucagendada'] ??
-                        0;
+                if (data['cargahorariauc'] != null &&
+                    data['cargahorariaucagendada'] != null) {
+                  _cargaRestante =
+                      data['cargahorariauc'] - data['cargahorariaucagendada'] ??
+                          0;
+                }
                 return Text('Instrutor: ${data['nomeinstrutor']}');
               },
             ),
-            Text('Horário: ${aulas.horario}'),
+            Text('Horário: ${aulas.horario} - ${aulas.horas}h'),
             Text('Status: ${aulas.status}'),
             FutureBuilder<Map<String, dynamic>>(
               future: _getAulaDetails(aulas.idaula!),

@@ -52,43 +52,43 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
   Future<void> _carregarDados() async {
     setState(() => _isLoading = true);
 
-    //try {
-    final supabase = Supabase.instance.client;
+    try {
+      final supabase = Supabase.instance.client;
 
-    // Buscar turmas
-    final turmasResponse = await supabase.from('turma').select();
-    if (turmasResponse.isEmpty) throw Exception('Nenhuma turma encontrada');
+      // Buscar turmas
+      final turmasResponse = await supabase.from('turma').select();
+      if (turmasResponse.isEmpty) throw Exception('Nenhuma turma encontrada');
 
-    // Buscar UCs
-    final ucsResponse = await supabase.from('unidades_curriculares').select();
-    if (ucsResponse.isEmpty) throw Exception('Nenhuma UC encontrada');
+      // Buscar UCs
+      final ucsResponse = await supabase.from('unidades_curriculares').select();
+      if (ucsResponse.isEmpty) throw Exception('Nenhuma UC encontrada');
 
-    // Mapear carga horária das UCs
-    final cargaHorariaMap = <int, int>{};
-    for (final uc in ucsResponse) {
-      cargaHorariaMap[uc['iduc'] as int] = (uc['cargahoraria'] ?? 0) as int;
+      // Mapear carga horária das UCs
+      final cargaHorariaMap = <int, int>{};
+      for (final uc in ucsResponse) {
+        cargaHorariaMap[uc['iduc'] as int] = (uc['cargahoraria'] ?? 0) as int;
+      }
+
+      if (mounted) {
+        setState(() {
+          _turmas = turmasResponse;
+          _ucs = ucsResponse;
+          _ucsFiltradas = [];
+          _cargaHorariaUc.addAll(cargaHorariaMap);
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Erro ao carregar dados: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
-
-    if (mounted) {
-      setState(() {
-        _turmas = turmasResponse;
-        _ucs = ucsResponse;
-        _ucsFiltradas = [];
-        _cargaHorariaUc.addAll(cargaHorariaMap);
-        _isLoading = false;
-      });
-    }
-    // } catch (e) {
-    //   if (mounted) {
-    //     setState(() => _isLoading = false);
-    //     ScaffoldMessenger.of(context).showSnackBar(
-    //       SnackBar(
-    //         content: Text('Erro ao carregar dados: $e'),
-    //         backgroundColor: Colors.red,
-    //       ),
-    //     );
-    //   }
-    // }
   }
 
   Future<Map<String, dynamic>> _getUcSchedulingInfo() async {
@@ -98,12 +98,16 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
 
     try {
       final response = await Supabase.instance.client
-          .from('aulas').select('sum(horas) as cargahorariauc').eq('iduc', _selectedUcId!).eq('idturma', _selectedTurmaId!).single();
+          .from('aulas_carga')
+          .select('*')
+          .eq('iduc', _selectedUcId!)
+          .eq('idturma', _selectedTurmaId!)
+          .single();
 
       final data = response;
 
-      final cargaHoraria =
-          data['cargahorariauc'] ?? _cargaHorariaUc[_selectedUcId] ?? 0;
+      final cargaHoraria = data['cargahorariauc'] != null ?
+          _cargaHorariaUc[_selectedUcId]! - data['cargahorariauc'] : _cargaHorariaUc[_selectedUcId];
 
       return {
         'hasScheduling': (data['cargahorariauc'] != null),
