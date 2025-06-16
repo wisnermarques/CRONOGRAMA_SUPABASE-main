@@ -1,5 +1,3 @@
-// ignore_for_file: curly_braces_in_flow_control_structures
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -23,6 +21,7 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
   int? _selectedUcId;
   String _periodo = 'Matutino';
   int _horasAula = 1;
+  TimeOfDay? _horaInicio;
   List<Map<String, dynamic>> _turmas = [];
   List<Map<String, dynamic>> _ucs = [];
   List<Map<String, dynamic>> _ucsFiltradas = [];
@@ -31,16 +30,31 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
   bool _hasExistingScheduling = false;
   int _currentCargaHoraria = 0;
 
+  // Calcula o horário no formato "19:00-22:00"
+  String? get _horarioFormatado {
+    if (_horaInicio == null) return null;
+    final horaFinal = _horaInicio!.replacing(
+      hour: _horaInicio!.hour + _horasAula,
+      minute: _horaInicio!.minute,
+    );
+    return '${_formatTimeOfDay(_horaInicio!)}-${_formatTimeOfDay(horaFinal)}';
+  }
+
+  String _formatTimeOfDay(TimeOfDay time) {
+    return '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+  }
+
   int get _cargaHorariaRestante {
     if (_selectedUcId == null) return 0;
 
-    // Se já sabemos que tem agendamento, retornamos a carga atual
+    // Se já tem agendamento, retorna a carga atual menos o que está sendo agendado agora
     if (_hasExistingScheduling) {
-      return _currentCargaHoraria;
+      return _currentCargaHoraria - (_horasAula * widget.selectedDays.length);
     }
 
-    // Caso contrário, retornamos a carga total da UC
-    return _cargaHorariaUc[_selectedUcId] ?? 0;
+    // Caso contrário, retorna a carga total da UC menos o que está sendo agendado agora
+    return (_cargaHorariaUc[_selectedUcId] ?? 0) -
+        (_horasAula * widget.selectedDays.length);
   }
 
   @override
@@ -106,8 +120,9 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
 
       final data = response;
 
-      final cargaHoraria = data['cargahorariauc'] != null ?
-          _cargaHorariaUc[_selectedUcId]! - data['cargahorariauc'] : _cargaHorariaUc[_selectedUcId];
+      final cargaHoraria = data['cargahorariauc'] != null
+          ? _cargaHorariaUc[_selectedUcId]! - (data['cargahorariauc'] as int)
+          : _cargaHorariaUc[_selectedUcId];
 
       return {
         'hasScheduling': (data['cargahorariauc'] != null),
@@ -118,6 +133,29 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
         'hasScheduling': false,
         'cargaHoraria': _cargaHorariaUc[_selectedUcId] ?? 0,
       };
+    }
+  }
+
+  Future<void> _selectTime(BuildContext context) async {
+    final TimeOfDay? picked = await showTimePicker(
+      context: context,
+      initialTime: _horaInicio ?? TimeOfDay.now(),
+      builder: (BuildContext context, Widget? child) {
+        return Theme(
+          data: ThemeData.light().copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Theme.of(context).colorScheme.primary,
+            ),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null && picked != _horaInicio) {
+      setState(() {
+        _horaInicio = picked;
+      });
     }
   }
 
@@ -333,7 +371,7 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                                   _hasExistingScheduling =
                                       schedulingInfo['hasScheduling'];
                                   _currentCargaHoraria =
-                                      schedulingInfo['cargaHoraria'];
+                                      schedulingInfo['cargaHoraria'] as int;
                                 });
                               }
                             },
@@ -386,6 +424,8 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                                 if (_horasAula > maxHoras) {
                                   _horasAula = maxHoras;
                                 }
+                                _horaInicio =
+                                    null; // Reseta a hora ao mudar período
                               });
                             },
                           ),
@@ -408,7 +448,11 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                                     '$_horasAula hora${_horasAula > 1 ? 's' : ''}',
                                 onChanged: (value) {
                                   if (mounted) {
-                                    setState(() => _horasAula = value.toInt());
+                                    setState(() {
+                                      _horasAula = value.toInt();
+                                      _horaInicio =
+                                          null; // Reseta a hora ao mudar carga horária
+                                    });
                                   }
                                 },
                                 activeColor: colorScheme.primary,
@@ -417,6 +461,53 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                               ),
                             ],
                           ),
+                          const SizedBox(height: 20),
+
+                          // Seletor de hora de início (só aparece após definir carga horária)
+                          if (_horasAula > 0) ...[
+                            InkWell(
+                              onTap: () => _selectTime(context),
+                              child: InputDecorator(
+                                decoration: InputDecoration(
+                                  labelText: 'Hora de Início',
+                                  prefixIcon: Icon(Icons.access_time,
+                                      color: colorScheme.primary),
+                                  border: const OutlineInputBorder(),
+                                  errorText:
+                                      _podeSalvar() && _horaInicio == null
+                                          ? 'Selecione a hora de início'
+                                          : null,
+                                ),
+                                child: Text(
+                                  _horaInicio != null
+                                      ? _formatTimeOfDay(_horaInicio!)
+                                      : 'Selecione a hora',
+                                  style: theme.textTheme.bodyLarge,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+
+                            // Exibição do horário formatado
+                            if (_horaInicio != null) ...[
+                              Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  'Horário agendado: $_horarioFormatado',
+                                  style: theme.textTheme.bodyLarge?.copyWith(
+                                    color: colorScheme.primary,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ),
+                              const SizedBox(height: 20),
+                            ],
+                          ],
                         ],
                       ],
                     ),
@@ -452,6 +543,9 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                             ),
                             const Divider(),
                             _buildInfoRow('Período:', _periodo, theme),
+                            if (_horaInicio != null)
+                              _buildInfoRow(
+                                  'Horário:', _horarioFormatado!, theme),
                             _buildInfoRow(
                                 'Horas por aula:', '$_horasAula', theme),
                             _buildInfoRow('Total de aulas:',
@@ -464,12 +558,10 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                             _buildInfoRow(
                               _hasExistingScheduling
                                   ? 'Carga horária restante:'
-                                  : 'Carga horária restante:',
-                              '${_cargaHorariaRestante - _horasAula * widget.selectedDays.length} horas',
+                                  : 'Carga horária total:',
+                              '${_cargaHorariaRestante >= 0 ? _cargaHorariaRestante : 0} horas',
                               theme,
-                              isAlert: _hasExistingScheduling &&
-                                  _cargaHorariaRestante <
-                                      (_horasAula * widget.selectedDays.length),
+                              isAlert: _cargaHorariaRestante < 0,
                             ),
                           ],
                         ),
@@ -558,7 +650,8 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
   bool _podeSalvar() {
     return _selectedTurmaId != null &&
         _selectedUcId != null &&
-        widget.selectedDays.isNotEmpty;
+        widget.selectedDays.isNotEmpty &&
+        _horaInicio != null;
   }
 
   Future<void> _salvarAulas() async {
@@ -570,22 +663,18 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
       final cargaTotalNecessaria = _horasAula * widget.selectedDays.length;
       final cargaAtual = _cargaHorariaUc[_selectedUcId] ?? 0;
 
-      // Verifica carga horária apenas se não houver agendamento existente
       if (!_hasExistingScheduling && cargaAtual < cargaTotalNecessaria) {
         throw Exception('Carga horária insuficiente para esta UC');
       }
 
-      // Atualização da carga horária da UC
-      // final novaCarga = cargaAtual - cargaTotalNecessaria;
-
-      // Inserção de aulas
+      // Inserção de aulas com o horário no formato "19:00-22:00"
       final List<Map<String, dynamic>> aulasParaInserir =
           widget.selectedDays.map((dia) {
         return {
           'iduc': _selectedUcId,
           'idturma': _selectedTurmaId,
           'data': DateFormat('yyyy-MM-dd').format(dia),
-          'horario': widget.periodoConfig[_periodo]!['horario'],
+          'horario': _horarioFormatado,
           'status': 'Agendada',
           'horas': _horasAula
         };

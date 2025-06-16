@@ -37,7 +37,6 @@ class _CronogramaPageState extends State<CronogramaPage> {
   List<Map<String, dynamic>> _cursos = [];
   int? _selectedTurmaId;
   final TurmaViewModel _viewModel = TurmaViewModel(TurmaRepository());
-  int _cargaRestante = 0;
 
   final Map<String, Map<String, dynamic>> _periodoConfig = {
     'Matutino': {
@@ -735,29 +734,26 @@ class _CronogramaPageState extends State<CronogramaPage> {
                   return const Text('Erro ao carregar dados');
                 }
                 final data = snapshot.data!;
-                // print(data);
-                if (data['cargahorariauc'] != null &&
-                    data['cargahorariaucagendada'] != null) {
-                  _cargaRestante =
-                      data['cargahorariauc'] - data['cargahorariaucagendada'] ??
-                          0;
-                }
-                return Text('Instrutor: ${data['nomeinstrutor']}');
-              },
-            ),
-            Text('Horário: ${aulas.horario} - ${aulas.horas}h'),
-            Text('Status: ${aulas.status}'),
-            FutureBuilder<Map<String, dynamic>>(
-              future: _getAulaDetails(aulas.idaula!),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Text('Carregando...');
-                }
-                if (snapshot.hasError || !snapshot.hasData) {
-                  return const Text('Erro ao carregar dados');
-                }
-
-                return Text('Carga horária restante: $_cargaRestante horas');
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Instrutor: ${data['nomeinstrutor']}'),
+                    Text('Horário: ${aulas.horario} - ${aulas.horas}h'),
+                    Text('Status: ${aulas.status}'),
+                    if (data['cargahorariauc'] != null &&
+                        data['cargahorariaucagendada'] != null)
+                      Text(
+                        'Carga horária restante: ${data['cargahorariauc'] - data['cargahorariaucagendada']} horas',
+                        style: TextStyle(
+                          color: (data['cargahorariauc'] -
+                                      data['cargahorariaucagendada']) <
+                                  0
+                              ? Colors.red
+                              : null,
+                        ),
+                      ),
+                  ],
+                );
               },
             ),
           ],
@@ -808,11 +804,15 @@ class _CronogramaPageState extends State<CronogramaPage> {
           .select('cargahorariauc')
           .eq('iduc', selectedUcId)
           .eq('idturma', selectedTurmaId)
-          .single();
+          .maybeSingle();
 
-      final int cargaHorariaUc = response2['cargahorariauc'] != null
-          ? (response2['cargahorariauc'] as num).toInt()
+      final int cargaHorariaUc = response2?['cargahorariauc'] != null
+          ? (response2!['cargahorariauc'] as num).toInt()
           : 0;
+
+      // Carga horária total da UC
+      final int cargaTotalUc =
+          response['unidades_curriculares']?['cargahoraria'] ?? 0;
 
       // Verifica se 'instrutores' é lista ou mapa
       String nomeInstrutor = 'Não encontrado';
@@ -823,22 +823,17 @@ class _CronogramaPageState extends State<CronogramaPage> {
         nomeInstrutor = instrutores['nomeinstrutor'] ?? 'Não encontrado';
       }
 
-      final Map<String, dynamic> resultado = {
+      return {
         'nomeuc':
             response['unidades_curriculares']?['nomeuc'] ?? 'Não encontrado',
         'turma': response['turma']?['turmanome'] ?? 'Não encontrada',
         'nomeinstrutor': nomeInstrutor,
-        'cargahorariauc':
-            response['unidades_curriculares']?['cargahoraria'] ?? 0,
+        'cargahorariauc': cargaTotalUc,
         'horario': response['horario'] ?? '',
         'status': response['status'] ?? '',
         'horas': response['horas'] ?? 0,
         'cargahorariaucagendada': cargaHorariaUc,
       };
-
-      print('Resultado: $resultado');
-
-      return resultado;
     } catch (e) {
       return {
         'nomeuc': 'Erro: $e',
@@ -848,6 +843,7 @@ class _CronogramaPageState extends State<CronogramaPage> {
         'status': '',
         'horas': 0,
         'cargahorariauc': 0,
+        'cargahorariaucagendada': 0,
       };
     }
   }
