@@ -352,6 +352,10 @@ class _CronogramaPageState extends State<CronogramaPage> {
   }
 
   Future<void> _imprimirCronogramaWindows() async {
+    final logoImage = pw.MemoryImage(
+      (await rootBundle.load('images/logo_senac.png')).buffer.asUint8List(),
+    );
+
     if (_selectedTurmaId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selecione uma turma para imprimir')),
@@ -359,218 +363,516 @@ class _CronogramaPageState extends State<CronogramaPage> {
       return;
     }
 
-    // Get the selected turma details
     final turma = _turmas.firstWhere((t) => t.idturma == _selectedTurmaId);
     final curso = _cursos.firstWhere(
       (c) => c['idcurso'] == turma.cursos?.idcurso,
       orElse: () => {'nomecurso': 'Curso não encontrado'},
     );
 
-    // Filter events for the focused month and selected turma
     final monthEvents = _filteredEvents.entries.where((entry) {
       return entry.key.year == _focusedDay.year &&
           entry.key.month == _focusedDay.month;
     }).toList();
 
-    // Sort events by date
     monthEvents.sort((a, b) => a.key.compareTo(b.key));
 
-    // Pre-fetch all aula details with proper error handling
-    final List<Map<String, dynamic>> aulaDetails = [];
+    final Map<String, List<Map<String, dynamic>>> aulasPorUC = {};
+    final Map<String, double> horasPorUC = {};
+    final Map<String, String> instrutorPrincipalPorUC = {};
+    final Set<int> diasComAulas = {};
+    TimeOfDay? menorHorarioInicio;
+    TimeOfDay? maiorHorarioTermino;
+
     for (var entry in monthEvents) {
       for (var aula in entry.value) {
         try {
           final details = await _getAulaDetails(aula.idaula!);
-          aulaDetails.add({
-            'idaula': aula.idaula,
+          final nomeUC = details['nomeuc'] ?? 'UC não definida';
+          final instrutor = details['nomeinstrutor'] ?? 'Não definido';
+          final primeiroNome = instrutor.split(' ').first;
+          final duracao = aula.horas.toDouble();
+
+          // Processa os dias da semana
+          final dataAula = aula.data;
+          diasComAulas.add(dataAula.weekday);
+
+          // Processa os horários
+          final horarioParts = aula.horario.split('-');
+          if (horarioParts.length == 2) {
+            final inicioParts = horarioParts[0].split(':');
+            final terminoParts = horarioParts[1].split(':');
+
+            if (inicioParts.length == 2 && terminoParts.length == 2) {
+              final inicio = TimeOfDay(
+                hour: int.parse(inicioParts[0]),
+                minute: int.parse(inicioParts[1]),
+              );
+              final termino = TimeOfDay(
+                hour: int.parse(terminoParts[0]),
+                minute: int.parse(terminoParts[1]),
+              );
+
+              // Atualiza menor horário de início
+              if (menorHorarioInicio == null ||
+                  (inicio.hour < menorHorarioInicio.hour ||
+                      (inicio.hour == menorHorarioInicio.hour &&
+                          inicio.minute < menorHorarioInicio.minute))) {
+                menorHorarioInicio = inicio;
+              }
+
+              // Atualiza maior horário de término
+              if (maiorHorarioTermino == null ||
+                  (termino.hour > maiorHorarioTermino.hour ||
+                      (termino.hour == maiorHorarioTermino.hour &&
+                          termino.minute > maiorHorarioTermino.minute))) {
+                maiorHorarioTermino = termino;
+              }
+            }
+          }
+
+          if (!aulasPorUC.containsKey(nomeUC)) {
+            aulasPorUC[nomeUC] = [];
+            horasPorUC[nomeUC] = 0;
+            instrutorPrincipalPorUC[nomeUC] = primeiroNome;
+          }
+
+          aulasPorUC[nomeUC]!.add({
             'data': aula.data,
             'horario': aula.horario,
             'status': aula.status,
-            'nomeuc': details['nomeuc'],
+            'instrutor': primeiroNome,
+            'duracao': duracao,
           });
+
+          horasPorUC[nomeUC] = horasPorUC[nomeUC]! + duracao;
         } catch (e) {
-          aulaDetails.add({
-            'idaula': aula.idaula,
-            'data': aula.data,
-            'horario': aula.horario,
-            'status': aula.status,
-            'nomeuc': 'Erro ao carregar',
-          });
+          // Handle error
         }
       }
     }
 
-    // Create PDF document
+    // Função para formatar dias da semana (mantida do código anterior)
+    String formatarDiasDaSemana(Set<int> dias) {
+      if (dias.isEmpty) return 'Não há aulas agendadas';
+
+      final List<String> nomesDias = [];
+      final sortedDays = dias.toList()..sort();
+
+      for (var dia in sortedDays) {
+        switch (dia) {
+          case 1:
+            nomesDias.add('Segunda');
+            break;
+          case 2:
+            nomesDias.add('Terça');
+            break;
+          case 3:
+            nomesDias.add('Quarta');
+            break;
+          case 4:
+            nomesDias.add('Quinta');
+            break;
+          case 5:
+            nomesDias.add('Sexta');
+            break;
+          case 6:
+            nomesDias.add('Sábado');
+            break;
+          case 7:
+            nomesDias.add('Domingo');
+            break;
+        }
+      }
+
+      if (nomesDias.length == 1) return '${nomesDias.first}-feira';
+
+      String result = '';
+      for (int i = 0; i < nomesDias.length; i++) {
+        if (i == nomesDias.length - 1) {
+          result += ' e ${nomesDias[i]}-feira';
+        } else {
+          result += '${nomesDias[i]}, ';
+        }
+      }
+
+      result = result.replaceAll(',  e', ' e');
+      return result;
+    }
+
+    // Formata o horário dinâmico
+    String formatarHorario() {
+      if (menorHorarioInicio == null || maiorHorarioTermino == null) {
+        return 'Horário não definido';
+      }
+
+      // Formata a hora com dois dígitos
+      String formatarHora(int hora) => hora.toString().padLeft(2, '0');
+      String formatarMinuto(int minuto) => minuto.toString().padLeft(2, '0');
+
+      return '${formatarHora(menorHorarioInicio.hour)}:${formatarMinuto(menorHorarioInicio.minute)} '
+          'às ${formatarHora(maiorHorarioTermino.hour)}:${formatarMinuto(maiorHorarioTermino.minute)}';
+    }
+
+    final periodoString = formatarDiasDaSemana(diasComAulas);
+    final horarioString = formatarHorario();
+
     final pdf = pw.Document();
 
-    // Add a page with the calendar and events
     pdf.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(20),
+      pw.Page(
+        pageFormat: PdfPageFormat.a4.landscape,
+        margin: const pw.EdgeInsets.all(15),
+        theme: pw.ThemeData.withFont(
+          base: await PdfGoogleFonts.robotoRegular(),
+          bold: await PdfGoogleFonts.robotoBold(),
+        ),
         build: (pw.Context context) {
-          return [
-            // Header with turma and month info
-            pw.Header(
-              level: 0,
-              child: pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  pw.Text('Cronograma de Aulas',
-                      style: pw.TextStyle(
-                          fontSize: 24, fontWeight: pw.FontWeight.bold)),
-                  pw.SizedBox(height: 10),
-                  pw.Text('Curso: ${curso['nomecurso']}'),
-                  pw.Text('Turma: ${turma.turmanome}'),
-                  pw.Text(
-                      'Mês: ${DateFormat('MMMM yyyy', 'pt_BR').format(_focusedDay)}'),
-                  pw.Divider(),
-                ],
-              ),
+          return pw.Container(
+            decoration: const pw.BoxDecoration(
+              color: PdfColors.white,
             ),
-
-            // Calendar table
-            pw.Table.fromTextArray(
-              border: pw.TableBorder.all(),
-              headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-              headerDecoration:
-                  const pw.BoxDecoration(color: PdfColors.grey200),
-              headers: ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'],
-              data: _buildCalendarTableData(),
-            ),
-
-            pw.SizedBox(height: 20),
-
-            // Events list
-            pw.Header(
-              level: 1,
-              child: pw.Text('Aulas Agendadas',
-                  style: pw.TextStyle(
-                      fontSize: 18, fontWeight: pw.FontWeight.bold)),
-            ),
-
-            if (monthEvents.isEmpty)
-              pw.Padding(
-                padding: const pw.EdgeInsets.all(8),
-                child: pw.Text('Nenhuma aula agendada para este mês'),
-              )
-            else
-              pw.Table(
-                border: pw.TableBorder.all(),
-                columnWidths: {
-                  0: const pw.FlexColumnWidth(1.5),
-                  1: const pw.FlexColumnWidth(3),
-                  2: const pw.FlexColumnWidth(2),
-                  3: const pw.FlexColumnWidth(2),
-                },
-                children: [
-                  pw.TableRow(
-                    decoration:
-                        const pw.BoxDecoration(color: PdfColors.grey200),
-                    children: [
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('Data',
-                            style:
-                                pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
+              children: [
+                // Header
+                pw.Row(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Container(
+                      height: 250,
+                      width: 250,
+                      child: pw.Image(logoImage, fit: pw.BoxFit.contain),
+                    ),
+                    pw.SizedBox(width: 10),
+                    pw.Expanded(
+                      child: pw.Column(
+                        crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                        children: [
+                          pw.SizedBox(height: 5),
+                          pw.Text('SENAC CATALÃO',
+                              style: pw.TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(height: 8),
+                          pw.Text('CURSO: ${curso['nomecurso']}',
+                              style: pw.TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(height: 6),
+                          pw.Text('TURMA: ${turma.turmanome}',
+                              style: pw.TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(height: 6),
+                          pw.Text('PERÍODO: $periodoString',
+                              style: pw.TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(height: 6),
+                          pw.Text('HORÁRIO: $horarioString',
+                              style: pw.TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: pw.FontWeight.bold)),
+                          pw.SizedBox(height: 15),
+                        ],
                       ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('Unidade Curricular',
-                            style:
-                                pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                    ),
+                  ],
+                ),
+
+                // Calendar table
+                pw.Table(
+                  border: pw.TableBorder.all(color: PdfColors.black),
+                  columnWidths: {
+                    0: const pw.FixedColumnWidth(130), // Largura aumentada
+                    for (int i = 1;
+                        i <=
+                            DateTime(_focusedDay.year, _focusedDay.month + 1, 0)
+                                .day;
+                        i++)
+                      i: pw.FixedColumnWidth(
+                          DateTime(_focusedDay.year, _focusedDay.month, i)
+                                      .weekday ==
+                                  DateTime.sunday
+                              ? 32 // Domingo um pouco maior
+                              : 24), // Dias de semana com largura mínima de 24
+                    DateTime(_focusedDay.year, _focusedDay.month + 1, 0).day +
+                        1: const pw.FixedColumnWidth(50),
+                  },
+                  defaultVerticalAlignment:
+                      pw.TableCellVerticalAlignment.middle,
+                  children: [
+                    // Month and weekday row
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.grey300,
                       ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('Horário',
-                            style:
-                                pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                      ),
-                      pw.Padding(
-                        padding: const pw.EdgeInsets.all(8),
-                        child: pw.Text('Status',
-                            style:
-                                pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                      ),
-                    ],
-                  ),
-                  ...aulaDetails.map((detail) {
-                    return pw.TableRow(
                       children: [
                         pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
+                          padding: const pw.EdgeInsets.all(4),
                           child: pw.Text(
-                              DateFormat('dd/MM/yyyy').format(detail['data'])),
+                            _getMonthName(_focusedDay.month),
+                            style: pw.TextStyle(
+                                fontSize: 9, fontWeight: pw.FontWeight.bold),
+                            textAlign: pw.TextAlign.center,
+                          ),
                         ),
+                        for (int day = 1;
+                            day <=
+                                DateTime(_focusedDay.year,
+                                        _focusedDay.month + 1, 0)
+                                    .day;
+                            day++)
+                          _buildWeekdayHeader(day, _focusedDay),
                         pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(detail['nomeuc']),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(detail['horario']),
-                        ),
-                        pw.Padding(
-                          padding: const pw.EdgeInsets.all(8),
-                          child: pw.Text(detail['status']),
+                          padding: const pw.EdgeInsets.all(4),
+                          child: pw.Text(
+                            'Total / Instrutor',
+                            style: pw.TextStyle(
+                                fontSize: 8, fontWeight: pw.FontWeight.bold),
+                            textAlign: pw.TextAlign.center,
+                          ),
                         ),
                       ],
-                    );
-                  }),
-                ],
-              ),
-          ];
+                    ),
+
+                    // Day numbers row
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                        color: PdfColors.grey300,
+                      ),
+                      children: [
+                        pw.Padding(
+                          padding: const pw.EdgeInsets.all(4),
+                          child: pw.Text(
+                            'Unidades Curriculares',
+                            style: pw.TextStyle(
+                                fontSize: 8, fontWeight: pw.FontWeight.bold),
+                            textAlign: pw.TextAlign.center,
+                          ),
+                        ),
+                        for (int day = 1;
+                            day <=
+                                DateTime(_focusedDay.year,
+                                        _focusedDay.month + 1, 0)
+                                    .day;
+                            day++)
+                          _buildDayNumberCell(day, _focusedDay),
+                        pw.Container(
+                          decoration: const pw.BoxDecoration(
+                            color: PdfColors.grey300,
+                          ),
+                          padding: const pw.EdgeInsets.all(4),
+                          child: pw.SizedBox(),
+                        ),
+                      ],
+                    ),
+
+                    // UC rows
+                    for (var ucEntry in aulasPorUC.entries)
+                      pw.TableRow(
+                        children: [
+                          // Célula do nome da UC (com altura dinâmica)
+                          pw.Container(
+                            width: 115,
+                            height: _calculateRowHeight(ucEntry.key),
+                            decoration: const pw.BoxDecoration(
+                              color: PdfColors.white,
+                            ),
+                            padding: const pw.EdgeInsets.all(4),
+                            child: pw.Column(
+                              mainAxisAlignment: pw.MainAxisAlignment.center,
+                              crossAxisAlignment: pw.CrossAxisAlignment.start,
+                              children: [
+                                pw.Text(
+                                  ucEntry.key,
+                                  style: const pw.TextStyle(
+                                    fontSize: 8, // Tamanho aumentado
+                                    height: 1.2, // Espaçamento entre linhas
+                                  ),
+                                  textAlign: pw.TextAlign.left,
+                                  maxLines: 10,
+                                  //overflow: pw.TextOverflow.clip,
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Células dos dias (com mesma altura da UC)
+                          for (int day = 1;
+                              day <=
+                                  DateTime(_focusedDay.year,
+                                          _focusedDay.month + 1, 0)
+                                      .day;
+                              day++)
+                            _buildDayCellWithDuration(ucEntry.value, day,
+                                _focusedDay, _calculateRowHeight(ucEntry.key)),
+
+                          // Célula do total/instrutor (com mesma altura)
+                          pw.Container(
+                            width: 50,
+                            height: _calculateRowHeight(ucEntry.key),
+                            decoration: const pw.BoxDecoration(
+                              color: PdfColors.white,
+                            ),
+                            padding: const pw.EdgeInsets.all(4),
+                            child: pw.Column(
+                              mainAxisAlignment: pw.MainAxisAlignment.center,
+                              children: [
+                                pw.Text(
+                                  '${horasPorUC[ucEntry.key]?.toStringAsFixed(1) ?? '0'}h',
+                                  style: pw.TextStyle(
+                                      fontSize: 9,
+                                      fontWeight: pw.FontWeight.bold),
+                                ),
+                                pw.Text(
+                                  instrutorPrincipalPorUC[ucEntry.key] ?? '',
+                                  style: const pw.TextStyle(fontSize: 8),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          );
         },
       ),
     );
 
-    // Save and launch the PDF
     await Printing.layoutPdf(
       onLayout: (PdfPageFormat format) async => pdf.save(),
     );
   }
 
-  List<List<String>> _buildCalendarTableData() {
-    final firstDayOfMonth = DateTime(_focusedDay.year, _focusedDay.month, 1);
-    final lastDayOfMonth = DateTime(_focusedDay.year, _focusedDay.month + 1, 0);
+  pw.Widget _buildWeekdayHeader(int day, DateTime focusedDay) {
+    final date = DateTime(focusedDay.year, focusedDay.month, day);
+    final weekday =
+        DateFormat('E', 'pt_BR').format(date).substring(0, 3).toLowerCase();
+    final isSunday = date.weekday == DateTime.sunday;
+    final isHoliday = _isFeriado(date);
 
-    // Calculate the weekday of the first day (0=Sunday, 6=Saturday)
-    int startingWeekday = firstDayOfMonth.weekday % 7;
+    return pw.Container(
+      width: 24, // Largura fixa mínima para evitar quebra
+      decoration: pw.BoxDecoration(
+        color: isSunday
+            ? PdfColors.red100
+            : isHoliday
+                ? PdfColors.green100
+                : PdfColors.grey300,
+      ),
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.FittedBox(
+        // Usar FittedBox para ajustar o texto ao espaço disponível
+        fit: pw.BoxFit.scaleDown,
+        child: pw.Text(
+          weekday,
+          style: pw.TextStyle(
+            fontSize: 8,
+            fontWeight: pw.FontWeight.bold,
+            color: isSunday ? PdfColors.red900 : PdfColors.black,
+          ),
+          textAlign: pw.TextAlign.center,
+        ),
+      ),
+    );
+  }
 
-    List<List<String>> weeks = [];
-    List<String> currentWeek = List.filled(7, '');
+  // Função para calcular a altura necessária baseada no texto da UC
+  double _calculateRowHeight(String ucName) {
+    final textLength = ucName.length;
+    if (textLength <= 30) return 24.0; // Altura mínima aumentada
+    if (textLength <= 60) return 36.0;
+    return 110.0; // Altura maior para textos longos
+  }
 
-    // Fill the days before the first day of the month
-    for (int i = 0; i < startingWeekday; i++) {
-      currentWeek[i] = '';
-    }
+  pw.Widget _buildDayNumberCell(int day, DateTime focusedDay) {
+    final date = DateTime(focusedDay.year, focusedDay.month, day);
+    final isSunday = date.weekday == DateTime.sunday;
+    final isHoliday = _isFeriado(date);
 
-    // Fill the days of the month
-    for (int day = 1; day <= lastDayOfMonth.day; day++) {
-      int weekday = (startingWeekday + day - 1) % 7;
-      currentWeek[weekday] = day.toString();
+    return pw.Container(
+      decoration: pw.BoxDecoration(
+        color: isSunday
+            ? PdfColors.red100
+            : isHoliday
+                ? PdfColors.green100
+                : PdfColors.grey300,
+      ),
+      padding: const pw.EdgeInsets.all(4),
+      child: pw.Text(
+        day.toString(),
+        style: pw.TextStyle(
+          fontSize: 9,
+          fontWeight: pw.FontWeight.bold,
+          color: isSunday ? PdfColors.red900 : PdfColors.black,
+        ),
+        textAlign: pw.TextAlign.center,
+      ),
+    );
+  }
 
-      // Check if this day has events
-      final date = DateTime(_focusedDay.year, _focusedDay.month, day);
-      if (_filteredEvents.containsKey(date)) {
-        currentWeek[weekday] += '*'; // Add marker for days with events
-      }
+  // Função modificada para construir as células de duração
+  pw.Widget _buildDayCellWithDuration(List<Map<String, dynamic>> aulas, int day,
+      DateTime focusedDay, double rowHeight) {
+    final date = DateTime(focusedDay.year, focusedDay.month, day);
+    final isSunday = date.weekday == DateTime.sunday;
+    final isHoliday = _isFeriado(date);
 
-      // Check if this day is a holiday
-      if (_isFeriado(date)) {
-        currentWeek[weekday] += '†'; // Add marker for holidays
-      }
+    final aula = aulas.firstWhere(
+      (a) => (a['data'] as DateTime).day == day,
+      orElse: () => {},
+    );
 
-      // If we've reached Saturday or the end of the month, add the week
-      if (weekday == 6 || day == lastDayOfMonth.day) {
-        weeks.add(List.from(currentWeek));
-        if (day != lastDayOfMonth.day) {
-          currentWeek = List.filled(7, '');
-        }
-      }
-    }
+    return pw.Container(
+      width: isSunday ? 32 : 24,
+      height: rowHeight, // Usa a mesma altura da linha
+      decoration: pw.BoxDecoration(
+        color: isSunday
+            ? PdfColors.red50
+            : isHoliday
+                ? PdfColors.green50
+                : aula.isEmpty
+                    ? PdfColors.grey200
+                    : PdfColors.blue50,
+        border: pw.Border.all(color: PdfColors.black),
+      ),
+      child: pw.Center(
+        child: pw.Text(
+          aula.isNotEmpty
+              ? aula['duracao'].toStringAsFixed(1)
+              : isHoliday
+                  ? 'F'
+                  : '',
+          style: pw.TextStyle(
+            fontSize: 10, // Tamanho aumentado
+            fontWeight: pw.FontWeight.bold,
+            color: isSunday ? PdfColors.red900 : PdfColors.black,
+          ),
+        ),
+      ),
+    );
+  }
 
-    return weeks;
+  String _getMonthName(int month) {
+    const months = [
+      'Janeiro',
+      'Fevereiro',
+      'Março',
+      'Abril',
+      'Maio',
+      'Junho',
+      'Julho',
+      'Agosto',
+      'Setembro',
+      'Outubro',
+      'Novembro',
+      'Dezembro'
+    ];
+    return months[month - 1];
   }
 
   Future<void> _removerAula(
