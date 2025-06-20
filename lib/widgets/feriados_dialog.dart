@@ -234,16 +234,11 @@ class _FeriadosDialogState extends State<FeriadosDialog> {
                 }
 
                 try {
-                  final response =
-                      await supabase.from('feriadosmunicipais').insert({
+                  await supabase.from('feriadosmunicipais').insert({
                     'data':
                         DateFormat('yyyy-MM-dd').format(selectedDateFeriado!),
                     'nome': feriadoMunicipalController.text,
                   });
-
-                  if (response.error != null) {
-                    throw response.error!;
-                  }
 
                   setState(() {
                     _feriadosMunicipais[selectedDateFeriado!] =
