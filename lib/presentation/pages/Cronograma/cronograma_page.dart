@@ -392,6 +392,8 @@ class _CronogramaPageState extends State<CronogramaPage> {
           final primeiroNome = instrutor.split(' ').first;
           final duracao = aula.horas.toDouble();
 
+          print(primeiroNome);
+
           // Processa os dias da semana
           final dataAula = aula.data;
           diasComAulas.add(dataAula.weekday);
@@ -435,6 +437,10 @@ class _CronogramaPageState extends State<CronogramaPage> {
             horasPorUC[nomeUC] = 0;
             instrutorPrincipalPorUC[nomeUC] = primeiroNome;
           }
+
+          instrutorPrincipalPorUC[nomeUC] = primeiroNome;
+
+          print(instrutorPrincipalPorUC);
 
           aulasPorUC[nomeUC]!.add({
             'data': aula.data,
@@ -719,19 +725,37 @@ class _CronogramaPageState extends State<CronogramaPage> {
                             child: pw.Column(
                               mainAxisAlignment: pw.MainAxisAlignment.center,
                               children: [
+                                // Linha das horas (mantida igual)
                                 pw.Text(
                                   '${horasPorUC[ucEntry.key]?.toStringAsFixed(1) ?? '0'}h',
                                   style: pw.TextStyle(
-                                      fontSize: 9,
-                                      fontWeight: pw.FontWeight.bold),
+                                    fontSize: 9,
+                                    fontWeight: pw.FontWeight.bold,
+                                  ),
                                 ),
-                                pw.Text(
-                                  instrutorPrincipalPorUC[ucEntry.key] ?? '',
-                                  style: const pw.TextStyle(fontSize: 8),
-                                ),
+                                // Linha do instrutor - Versão simplificada
+                                if (instrutorPrincipalPorUC[ucEntry.key] !=
+                                        null &&
+                                    instrutorPrincipalPorUC[ucEntry.key]!
+                                        .isNotEmpty)
+                                  pw.Text(
+                                    instrutorPrincipalPorUC[ucEntry.key]!,
+                                    style: const pw.TextStyle(
+                                      fontSize: 8,
+                                      color: PdfColors.black,
+                                    ),
+                                  )
+                                else
+                                  pw.Text(
+                                    'Sem instrutor',
+                                    style: const pw.TextStyle(
+                                      fontSize: 8,
+                                      color: PdfColors.black,
+                                    ),
+                                  ),
                               ],
                             ),
-                          ),
+                          )
                         ],
                       ),
                   ],

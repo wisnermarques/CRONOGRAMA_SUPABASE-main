@@ -561,7 +561,8 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                                   : 'Carga horária total:',
                               '${_cargaHorariaRestante >= 0 ? _cargaHorariaRestante : 0} horas',
                               theme,
-                              isAlert: _cargaHorariaRestante < 0,
+                              isAlert: _cargaHorariaRestante <
+                                  0, // Mostra em vermelho se <= 0
                             ),
                           ],
                         ),
@@ -575,7 +576,9 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                       onPressed:
                           _podeSalvar() && !_isLoading ? _salvarAulas : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: colorScheme.primary,
+                        backgroundColor: _podeSalvar()
+                            ? colorScheme.primary
+                            : Colors.grey, // Muda a cor quando desabilitado
                         foregroundColor: colorScheme.onPrimary,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
@@ -592,16 +595,21 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
                                 strokeWidth: 3,
                               ),
                             )
-                          : const Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(Icons.save, size: 24),
-                                SizedBox(width: 8),
-                                Text(
-                                  'Salvar Agendamento',
-                                  style: TextStyle(fontSize: 18),
-                                ),
-                              ],
+                          : Tooltip(
+                              message: _cargaHorariaRestante <= 0
+                                  ? 'Carga horária insuficiente'
+                                  : 'Salvar agendamento',
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.save, size: 24),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Salvar Agendamento',
+                                    style: TextStyle(fontSize: 18),
+                                  ),
+                                ],
+                              ),
                             ),
                     ),
                   ),
@@ -651,7 +659,8 @@ class _AgendarAulasPageState extends State<AgendarAulasPage> {
     return _selectedTurmaId != null &&
         _selectedUcId != null &&
         widget.selectedDays.isNotEmpty &&
-        _horaInicio != null;
+        _horaInicio != null &&
+        _cargaHorariaRestante >= 0;
   }
 
   Future<void> _salvarAulas() async {
